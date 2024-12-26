@@ -30,9 +30,10 @@
 #     TORT OR OTHERWISE, ARISING FROM,OUT OF OR IN CONNECTION WITH THE
 #     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}" .sh)         # script name without extension
-SCRIPT_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")") # script directory
-PYTHON_SCRIPT="${SCRIPT_DIR}/${SCRIPT_NAME}.py"         # name of the Python script to run
+SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}" .sh)           # script name without extension
+SCRIPT_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")   # script directory
+PYTHON_SCRIPT="${SCRIPT_DIR}/${SCRIPT_NAME}.py"           # name of the Python script to run
+NON_ESSENTIAL_OPTIONS=( "-c" "--color" "--color-always" ) # options that do not trigger any action by themselves
 
 
 # ANSI escape codes for colored terminal output
@@ -93,7 +94,7 @@ activate_venv() {
     # shellcheck disable=SC1091
     if ! source "venv/bin/activate"; then
         fatal_error "Error when activating virtual environment, it might be corrupted." \
-                    "you can use --recreate-venv to recreate the virtual environment."
+                    "You can use --recreate-venv to recreate the virtual environment."
     fi
 }
 
@@ -110,9 +111,20 @@ install_dependencies() {
     fi
     if ! pip install -r "$requirements_file"; then
         fatal_error "Error when installing dependencies." \
-                    "pip failed to install some packages, that might be due to network issues or incompatible packages."
+                    "'pip' failed to install some packages, that might be due to network issues or incompatible packages."
     fi
     echo "Dependencies installed successfully."
+}
+
+# Check if a given option is non-essential
+# (non-essential options do not trigger any action by themselves)
+is_non_essential_option() {
+    local option=$1
+    [[ -z "$option" ]] && return 0
+    for non_essential_option in "${NON_ESSENTIAL_OPTIONS[@]}"; do
+        [[ "$option" == "$non_essential_option" ]] && return 0
+    done
+    return 1
 }
 
 
@@ -128,20 +140,44 @@ cd "${SCRIPT_DIR}" \
 # verify if any extra options are passed as arguments
 CREATE_VENV=false
 REMOVE_VENV=false
-for arg in "$@"; do
-    case $arg in
-        --create-venv)
-            CREATE_VENV=true
-            ;;
-        --remove-venv)
-            REMOVE_VENV=true
-            ;;
-        --recreate-venv)
-            REMOVE_VENV=true
-            CREATE_VENV=true
-            ;;
-    esac
-done
+SHOW_HELP=false
+
+if [[ $# -le 1 ]] && is_non_essential_option "$1"; then
+    # if no arguments are passed, the help message will be displayed
+    SHOW_HELP=true
+else
+    # loop through the arguments and set the corresponding
+    # variables to true if they match the options
+    for arg in "$@"; do
+        case $arg in
+            -h | --help)
+                SHOW_HELP=true
+                ;;
+            --create-venv)
+                CREATE_VENV=true
+                ;;
+            --remove-venv)
+                REMOVE_VENV=true
+                ;;
+            --recreate-venv)
+                REMOVE_VENV=true
+                CREATE_VENV=true
+                ;;
+        esac
+    done
+fi
+
+# handle the help option
+if [[ "$SHOW_HELP" == true ]]; then
+    python3 "$PYTHON_SCRIPT" --help
+    echo
+    echo "wrapper options:"
+    echo "  --create-venv      Create the python virtual environment"
+    echo "  --remove-venv      Remove the python virtual environment"
+    echo "  --recreate-venv    Remove and recreate the python virtual environment"
+    echo
+    exit 0
+fi
 
 # handle the extra options for removing the venv
 if [[ "$REMOVE_VENV" == true ]]; then
