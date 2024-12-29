@@ -32,9 +32,16 @@
 #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}" .sh)           # script name without extension
 SCRIPT_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")   # script directory
-PYTHON_SCRIPT="${SCRIPT_DIR}/${SCRIPT_NAME}.py"           # name of the Python script to run
-NON_ESSENTIAL_OPTIONS=( "-c" "--color" "--color-always" ) # options that do not trigger any action by themselves
+PYTHON_SCRIPT="${SCRIPT_DIR}/${SCRIPT_NAME}.py"           # path to python script to run
+REQUIREMENTS_FILE="${SCRIPT_DIR}/requirements.txt"        # path to requirements file
 
+# VENV_DIR: specifies the directory for python virtual environment; default is `SCRIPT_DIR/venv`
+# PYTHON  : specifies the path to the Python interpreter; default is `python3`
+[[ "$VENV_DIR" ]] || VENV_DIR="${SCRIPT_DIR}/venv"
+[[ "$PYTHON"   ]] || PYTHON=python3
+
+# List of options that do not trigger any action by themselves
+NON_ESSENTIAL_OPTIONS=( "-c" "--color" "--color-always" )
 
 # ANSI escape codes for colored terminal output
 RED='\e[91m'
@@ -78,7 +85,7 @@ create_venv() {
         return
     fi
     echo "Creating virtual environment..."
-    if ! python3 -m venv venv; then
+    if ! python3 -m venv "${VENV_DIR}"; then
         fatal_error "Virtual environment creation failed." \
                     "Please check if python3 and venv are installed on your system."
     fi
@@ -87,12 +94,12 @@ create_venv() {
 
 # Activate the python virtual environment
 activate_venv() {
-    if [[ ! -f "venv/bin/activate" ]]; then
+    if [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
         fatal_error "The virtual environment does not exist." \
                     "you can use --create-venv to create it"
     fi
     # shellcheck disable=SC1091
-    if ! source "venv/bin/activate"; then
+    if ! source "${VENV_DIR}/bin/activate"; then
         fatal_error "Error when activating virtual environment, it might be corrupted." \
                     "You can use --recreate-venv to recreate the virtual environment."
     fi
@@ -131,11 +138,6 @@ is_non_essential_option() {
 #===========================================================================#
 #////////////////////////////////// MAIN ///////////////////////////////////#
 #===========================================================================#
-
-# change to the directory where this script is located
-cd "${SCRIPT_DIR}" \
- || fatal_error "Could not change to script directory." "${SCRIPT_DIR}" \
-                "Explaining: This can be an erroneous path or a permission issue."
 
 # verify if any extra options are passed as arguments
 CREATE_VENV=false
@@ -195,7 +197,7 @@ fi
 if [[ "$CREATE_VENV" == true ]]; then
     create_venv
     activate_venv
-    install_dependencies 'requirements.txt'
+    install_dependencies "$REQUIREMENTS_FILE"
     exit 0
 fi
 
@@ -206,4 +208,4 @@ if [[ ! -f "$PYTHON_SCRIPT" ]]; then
                 "Please ensure that the Python script '${python_script_name}' exists in the same directory as this bash wrapper."
 fi
 activate_venv
-python3 "$PYTHON_SCRIPT" "$@"
+"$PYTHON" "$PYTHON_SCRIPT" "$@"
