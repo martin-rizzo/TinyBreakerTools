@@ -42,28 +42,42 @@ if __name__ == '__main__' and ("-h" not in sys.argv and "--help" not in sys.argv
     from safetensors       import safe_open
     from safetensors.numpy import save_file as save_safetensors
 
+# directory where this script is located
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-FSTAGE_TXENCODER_SD_KEY   = "first_stage_txmodel/encoder/sd15"
-FSTAGE_TXDECODER_SD_KEY   = "first_stage_txmodel/decoder/sd15"
-FSTAGE_TXENCODER_SDXL_KEY = "first_stage_txmodel/encoder/sdxl"
-FSTAGE_TXDECODER_SDXL_KEY = "first_stage_txmodel/decoder/sdxl"
-FSTAGE_HQENCODER_SD_KEY   = "first_stage_hqmodel/encoder/sd15"
-FSTAGE_HQDECODER_SD_KEY   = "first_stage_hqmodel/decoder/sd15"
-FSTAGE_HQENCODER_SDXL_KEY = "first_stage_hqmodel/encoder/sdxl"
-FSTAGE_HQDECODER_SDXL_KEY = "first_stage_hqmodel/decoder/sdxl"
-BASE_MODEL_KEY            = "base_model"
-BASE_COND_KEY             = "base_conditioner"
-TRANSCODER_KEY            = "transcoder"
-REFINER_MODEL_KEY         = "refiner_model"
-REFINER_COND_KEY          = "refiner_conditioner"
+_DEFAULT_AUXILIARY_MODEL_PATH = os.path.join(_SCRIPT_DIR, "auxiliary.safetensors")
 
+# IDs of the different model types used by TinyBreaker
+_FSTAGE_VAE_SD_ENCODER  = "first_stage_hqmodel (sd,encoder)"
+_FSTAGE_VAE_SD_DECODER  = "first_stage_hqmodel (sd,decoder)"
+_FSTAGE_VAE_XL_ENCODER  = "first_stage_hqmodel (xl,encoder)"
+_FSTAGE_VAE_XL_DECODER  = "first_stage_hqmodel (xl,decoder)"
+_FSTAGE_TINY_SD_ENCODER = "first_stage_model (sd,encoder)"
+_FSTAGE_TINY_XL_ENCODER = "first_stage_model (xl,encoder)"
+_FSTAGE_TINY_SD_DECODER = "first_stage_model (sd,decoder)"
+_FSTAGE_TINY_XL_DECODER = "first_stage_model (xl,decoder)"
+_BASE_MODEL             = "base.model"
+_BASE_COND              = "base.conditioner"
+_TRANSCODER             = "transcoder"
+_REFINER_MODEL_SD       = "refiner.model (sd)"
+_REFINER_MODEL_XL       = "refiner.model (xl)"
+_REFINER_COND_SD        = "refiner.conditioner (sd)"
+_REFINER_COND_XL        = "refiner.conditioner (xl)"
 
 # suffixes for each recognized model type
 _SUFFIXES = {
-    "decoder"          : "decoder.conv_in.weight",
-    "encoder_diffusers": "decoder.up_blocks.0.resnets.0.norm1.weight",
-    "encoder"          : "encoder.conv_in.weight",
-    "encoder_diffusers": "encoder.down_blocks.0.resnets.1.norm2.weight",
+    "vae_decoder"          : "decoder.conv_in.weight",
+    "vae_decoder_diffusers": "decoder.up_blocks.0.resnets.0.norm1.weight",
+    "vae_encoder"          : "encoder.conv_in.weight",
+    "vae_encoder_diffusers": "encoder.down_blocks.0.resnets.1.norm2.weight",
+    "pixart"               : "t_block.1.weight",
+    "pixart_diffusers"     : "adaln_single.emb.timestep_embedder.linear_1.bias",
+    "sd15model"            : "input_blocks.8.1.transformer_blocks.0.attn1.to_k.weight",
+    "sd15model_diffusers"  : "down_blocks.2.attentions.1.transformer_blocks.0.attn1.to_k.weight",
+    "sd15cond"             : "text_model.encoder.layers.8.self_attn.out_proj.weight",
+    "sdxlmodel"            : "input_blocks.8.1.transformer_blocks.8.attn1.to_k.weight",
+    "sdxlmodel_diffusers"  : "down_blocks.2.attentions.1.transformer_blocks.8.attn1.to_k.weight",
+    "sdxlcond"             : "embedders.1.model.transformer.resblocks.28.mlp.c_proj.weight",
 }
 
 
@@ -72,6 +86,7 @@ RED    = '\033[91m'
 GREEN  = '\033[92m'
 YELLOW = '\033[93m'
 CYAN   = '\033[96m'
+DARK_GRAY = '\033[90m'
 DEFAULT_COLOR = '\033[0m'
 
 #----------------------------- ERROR MESSAGES ------------------------------#
@@ -114,14 +129,28 @@ def is_terminal_output() -> bool:
     """Check if the standard output is connected to a terminal."""
     return sys.stdout.isatty()
 
+def get_file_extension(path: str) -> str:
+    """Returns the file extension from a given file path."""
+    return os.path.splitext(path)[1]
 
-def print_submodel_loc(name: str, location: tuple) -> None:
+def find_unique_path(path: str) -> str:
+    """Returns the first available path to not overwrite an existing file."""
+    if not os.path.exists(path):
+        return path
+    base_name, extension = os.path.splitext(path)
+    for number in range(1, 1000000):
+        new_path = f"{base_name}_{number:02d}{extension}"
+        if not os.path.exists(new_path) or number == 999999:
+            return new_path
+
+def print_submodel_loc(name: str, location: tuple, no_location_message: str = None) -> None:
     """Prints the location of a submodel that will be part of the Tiny Breaker model."""
     path, prefix = location if location else ("", "")
-    filename_and_prefix = "---"
+    filename_and_prefix = no_location_message or "---"
+    file_color          = YELLOW if filename_and_prefix != no_location_message else DARK_GRAY
     if path:
-        filename_and_prefix = f"{os.path.basename(path)} [{prefix}]"
-    print(f"  {CYAN}+ {name:<24}:{DEFAULT_COLOR} {YELLOW}{filename_and_prefix}{DEFAULT_COLOR}")
+        filename_and_prefix = f"{os.path.basename(path)}  {DARK_GRAY}({prefix}*)"
+    print(f"  {CYAN}+ {name:<24}:{DEFAULT_COLOR} {file_color}{filename_and_prefix}{DEFAULT_COLOR}")
 
 
 def normalize_prefix(prefix: str) -> str:
@@ -167,12 +196,13 @@ def load_safetensors_header(path: str, prefix="") -> dict:
 
     except json.JSONDecodeError as e:
         fatal_error(f"The file '{path}' does not have a valid JSON header: <{e}>")
-    #except IOError:
-    #    fatal_error(f"Error reading the file '{path}'.")
+    except IOError:
+       fatal_error(f"Error reading the file '{path}'.")
 
 
 def find_tensor_prefix(state_dict    : dict,
                        suffix        : str,
+                       containing    : str = None,
                        not_containing: str = None
                        ) -> str:
     """
@@ -185,15 +215,14 @@ def find_tensor_prefix(state_dict    : dict,
     # iterate over all keys in the state dictionary
     for key in state_dict.keys():
         if key.endswith(suffix):
+            if (containing is not None) and (containing not in key):
+                continue
             if (not_containing is not None) and (not_containing in key):
                 continue
             return key[:-len(suffix)]
 
     # if no key matches the suffix, return an empty string
     return ""
-
-
-
 
 
 #---------------------------- STATE DICT CLASS -----------------------------#
@@ -276,17 +305,38 @@ class StateDict(dict):
         return StateDict( { prefix + k: v for k, v in self.items() } )
 
 
-#---------------------------- SUBMODELS FINDER -----------------------------#
+    def save_as_safetensors(self,
+                            path     : str,
+                            metadata : dict = None,
+                            overwrite: bool = False,
+                            ) -> None:
+        """Saves the tensors in this StateDict as a safetensors file at 'path'.
+        Args:
+            path      (str) : The file path to save the safetensors file.
+            metadata  (dict): A dictionary containing additional metadata for the safetensors file.
+            overwrite (bool): If True, overwrites the existing file at 'path'.
+        """
+        if not get_file_extension(path):
+            path += ".safetensors"
+
+        # save the tensors and metadata to the file
+        if not overwrite:
+            path = find_unique_path(path)
+        save_safetensors( self, filename=path, metadata=metadata )
+
+
+
+#---------------------------- SUBMODEL FINDERS -----------------------------#
 
 def find_pixart_submodels(file_path: str) -> dict:
-    """Finds the necessary submodels in a PixArt model file."""
+    """Finds the necessary submodels in a PixArt model file. (--pixart)"""
     header = load_safetensors_header(file_path)
 
     # each found submodel will be added to this list by its prefix
     prefixes = {}
-    prefixes[BASE_MODEL_KEY] = \
-        find_tensor_prefix(header, suffix="t_block.1.weight") or \
-        find_tensor_prefix(header, suffix="adaln_single.emb.timestep_embedder.linear_1.bias")
+    prefixes[_BASE_MODEL] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["pixart"          ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["pixart_diffusers"])
 
     # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
     locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
@@ -294,17 +344,62 @@ def find_pixart_submodels(file_path: str) -> dict:
 
 
 def find_sd_submodels(file_path: str) -> dict:
-    """Finds the necessary submodels in a Stable Diffusion 1.5 model file."""
+    """Finds the necessary submodels in a Stable Diffusion 1.5 model file. (--sd)"""
     header = load_safetensors_header(file_path)
 
     # each found submodel will be added to this list by its prefix
     prefixes = {}
-    prefixes[FSTAGE_HQENCODER_SD_KEY] = \
-        find_tensor_prefix(header, suffix=_SUFFIXES["encoder"          ]) or \
-        find_tensor_prefix(header, suffix=_SUFFIXES["encoder_diffusers"])
-    prefixes[FSTAGE_HQDECODER_SD_KEY] = \
-        find_tensor_prefix(header, suffix=_SUFFIXES["decoder"          ]) or \
-        find_tensor_prefix(header, suffix=_SUFFIXES["decoder_diffusers"])
+    prefixes[_FSTAGE_VAE_SD_ENCODER] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_encoder"          ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_encoder_diffusers"])
+    prefixes[_FSTAGE_VAE_SD_DECODER] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_decoder"          ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_decoder_diffusers"])
+    prefixes[_REFINER_COND_SD] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sd15cond"             ])
+    prefixes[_REFINER_MODEL_SD] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sd15model"            ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sd15model_diffusers"  ])
+
+    # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
+    locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
+    return locations
+
+
+def find_sdxl_submodels(file_path: str) -> dict:
+    """Finds the necessary submodels in a Stable Diffusion XL model file. (--sdxl)"""
+    header = load_safetensors_header(file_path)
+
+    # each found submodel will be added to this list by its prefix
+    prefixes = {}
+    prefixes[_FSTAGE_VAE_XL_ENCODER] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_encoder"          ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_encoder_diffusers"])
+    prefixes[_FSTAGE_VAE_XL_DECODER] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_decoder"          ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["vae_decoder_diffusers"])
+    prefixes[_REFINER_COND_XL] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sdxlcond"             ])
+    prefixes[_REFINER_MODEL_XL] = \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sdxlmodel"            ]) or \
+        find_tensor_prefix(header, suffix=_SUFFIXES["sdxlmodel_diffusers"  ])
+
+    # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
+    locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
+    return locations
+
+
+def find_auxiliary_submodels(file_path: str) -> dict:
+    """Finds the necessary auxiliary models used by TinyBreaker. (--aux)"""
+    header = load_safetensors_header(file_path)
+
+    # each found submodel will be added to this list by its prefix
+    prefixes = {}
+    prefixes[_FSTAGE_TINY_SD_ENCODER] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="sd")
+    prefixes[_FSTAGE_TINY_SD_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="sd")
+    prefixes[_FSTAGE_TINY_XL_ENCODER] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="xl")
+    prefixes[_FSTAGE_TINY_XL_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="xl")
+    prefixes[_TRANSCODER            ] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="transcoder")
 
     # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
     locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
@@ -313,7 +408,7 @@ def find_sd_submodels(file_path: str) -> dict:
 
 #------------------------------ TINY BREAKER -------------------------------#
 
-def make_tiny_breaker_with_sd15(submodels_loc: dict) -> dict:
+def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
     """Creates a TinyBreaker model from a PixArt model (base) and a Stable Diffusion 1.5 model (refiner).
     Args:
         submodels_loc (dict): A dictionary of submodel -> (file_path, prefix) with
@@ -325,59 +420,73 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> dict:
     # by default we will use different encoder and decoder for the VAE,
     # a SDXL encoder to provide SDXL latent images to the PixArt model, and
     # a SD1.5 decoder to decode the latent images from the refiner.
-    FSTAGE_TXENCODER_KEY = FSTAGE_TXENCODER_SDXL_KEY
-    FSTAGE_TXDECODER_KEY = FSTAGE_TXDECODER_SD_KEY
-    FSTAGE_HQENCODER_KEY = FSTAGE_HQENCODER_SDXL_KEY
-    FSTAGE_HQDECODER_KEY = FSTAGE_HQDECODER_SD_KEY
+    FSTAGE_MODEL_ENC   = _FSTAGE_TINY_XL_ENCODER  # <- Tiny SDXL
+    FSTAGE_MODEL_DEC   = _FSTAGE_TINY_SD_DECODER  # <- Tiny SD1.5
+    FSTAGE_HQMODEL_ENC = "discarded"
+    FSTAGE_HQMODEL_DEC = _FSTAGE_VAE_SD_DECODER   # <- SD1.5
+    REFINER_MODEL      = _REFINER_MODEL_SD        # <- SD1.5
+    REFINER_COND       = _REFINER_COND_SD         # <- SD1.5
 
     # show information about any submodel that will be used to create the TinyBreaker model
-    print_submodel_loc("first stage    /encoder", submodels_loc.get(FSTAGE_TXENCODER_KEY))
-    print_submodel_loc("first stage    /decoder", submodels_loc.get(FSTAGE_TXDECODER_KEY))
-    print_submodel_loc("first stage HQ /encoder", submodels_loc.get(FSTAGE_HQENCODER_KEY))
-    print_submodel_loc("first stage HQ /decoder", submodels_loc.get(FSTAGE_HQDECODER_KEY))
-    print_submodel_loc("base model"             , submodels_loc.get(BASE_MODEL_KEY      ))
-    print_submodel_loc("transcoder"             , submodels_loc.get(TRANSCODER_KEY      ))
-    print_submodel_loc("refiner model"          , submodels_loc.get(REFINER_MODEL_KEY   ))
-    print_submodel_loc("refiner conditioner"    , submodels_loc.get(REFINER_COND_KEY    ))
+    print_submodel_loc("first stage HQ .encoder"  , submodels_loc.get(FSTAGE_HQMODEL_ENC), ">> discarded")
+    print_submodel_loc("first stage HQ .decoder"  , submodels_loc.get(FSTAGE_HQMODEL_DEC))
+    print_submodel_loc("first stage    .encoder"  , submodels_loc.get(FSTAGE_MODEL_ENC  ))
+    print_submodel_loc("first stage    .decoder"  , submodels_loc.get(FSTAGE_MODEL_DEC  ))
+    print_submodel_loc("base model"               , submodels_loc.get(_BASE_MODEL       ))
+    print_submodel_loc("base conditioner"         , submodels_loc.get(_BASE_COND        ), ">> external t5-encoder text model")
+    print_submodel_loc("transcoder"               , submodels_loc.get(_TRANSCODER       ))
+    print_submodel_loc("refiner model"            , submodels_loc.get(REFINER_MODEL     ))
+    print_submodel_loc("refiner conditioner "     , submodels_loc.get(REFINER_COND      ))
 
-    if not FSTAGE_TXENCODER_KEY in submodels_loc:
+    if not _FSTAGE_TINY_XL_ENCODER in submodels_loc:
         fatal_error("Missing first stage encoder.", "Some model containing a Tiny SDXL VAE encoder must be provided.")
-    if not FSTAGE_TXDECODER_KEY in submodels_loc:
+    if not _FSTAGE_TINY_SD_DECODER in submodels_loc:
         fatal_error("Missing first stage decoder.", "Some model containing a Tiny SD1.5 VAE decoder must be provided.")
-    if not FSTAGE_HQENCODER_KEY in submodels_loc:
-        fatal_error("Missing first stage HQ encoder.", "Some model containing a SDXL VAE encoder must be provided.")
-    if not FSTAGE_HQDECODER_KEY in submodels_loc:
+    if not _FSTAGE_VAE_SD_DECODER in submodels_loc:
         fatal_error("Missing first stage HQ decoder.", "Some model containing a SD1.5 VAE decoder must be provided.")
 
-    state_dict = { }
+    # load the submodels
+    fstage_hqmodel_enc = StateDict()
+    fstage_hqmodel_dec = StateDict.from_location(submodels_loc.get(FSTAGE_HQMODEL_DEC), "decoder", "post_quant_conv")
+    fstage_model_enc   = StateDict.from_location(submodels_loc.get(FSTAGE_MODEL_ENC  ), "encoder")
+    fstage_model_dec   = StateDict.from_location(submodels_loc.get(FSTAGE_MODEL_DEC  ), "decoder")
+    base_model         = StateDict.from_location(submodels_loc.get(_BASE_MODEL       ))
+    transcoder_model   = StateDict.from_location(submodels_loc.get(_TRANSCODER       ))
+    refiner_model      = StateDict.from_location(submodels_loc.get(REFINER_MODEL     ))
+    refiner_cond       = StateDict.from_location(submodels_loc.get(REFINER_COND      ))
 
-    # fstage_hq_encoder = StateDict.from_location(submodels_loc.get(FSTAGE_TXENCODER_KEY), "encoder", "quant_conv")
-    # fstage_hq_decoder = StateDict.from_location(submodels_loc.get(FSTAGE_TXDECODER_KEY), "decoder", "post_quant_conv")
-    # base_model        = StateDict.from_location(submodels_loc.get(BASE_MODEL_KEY       ))
-    # transcoder_model  = StateDict.from_location(submodels_loc.get(TRANSCODER_KEY       ))
-    # refiner_model     = StateDict.from_location(submodels_loc.get(REFINER_MODEL_KEY    ))
-    # refiner_cond      = StateDict.from_location(submodels_loc.get(REFINER_COND_KEY     ))
+    # add the prefixes to each submodel
+    fstage_hqmodel_enc = fstage_hqmodel_enc.with_prefix("first_stage_hqmodel")
+    fstage_hqmodel_dec = fstage_hqmodel_dec.with_prefix("first_stage_hqmodel")
+    fstage_model_enc   = fstage_model_enc.with_prefix("first_stage_model")
+    fstage_model_dec   = fstage_model_dec.with_prefix("first_stage_model")
+    base_model         = base_model.with_prefix("base.diffusion_model")
+    transcoder_model   = transcoder_model.with_prefix("transcoder")
+    refiner_model      = refiner_model.with_prefix("refiner.diffusion_model")
+    refiner_cond       = refiner_cond.with_prefix("refiner.conditioner")
 
-    # fstage_hq_encoder = fstage_hq_encoder.with_prefix("first_stage_hqmodel")
-    # fstage_hq_decoder = fstage_hq_decoder.with_prefix("first_stage_hqmodel")
-    # base_model        = base_model.with_prefix("base_model")
-    # transcoder_model  = transcoder_model.with_prefix("transcoder")
-    # refiner_model     = refiner_model.with_prefix("refiner_model")
-    # refiner_cond      = refiner_cond.with_prefix("refiner_conditioner")
-
-    # state_dict = {**fstage_hq_encoder, **fstage_hq_decoder}
-
+    # create the TinyBreaker model combining all the submodels
+    state_dict = StateDict({
+        **fstage_hqmodel_enc,
+        **fstage_hqmodel_dec,
+        **fstage_model_enc,
+        **fstage_model_dec,
+        **base_model,
+        **transcoder_model,
+        **refiner_model,
+        **refiner_cond,
+    })
     return state_dict
 
 
-def make_tiny_breaker_with_sdxl(submodels_loc: dict) -> dict:
+def make_tiny_breaker_with_sdxl(submodels_loc: dict) -> StateDict:
     """Creates a TinyBreaker model from a PixArt model (base) and a SDXL model (refiner)."""
     fatal_error("make_tiny_breaker_with_sdxl() is not implemented yet.",
                 "Only SD1.5 refiners are supported at the moment, use the --sd option.")
-    return {}
+    return StateDict()
 
 
-def make_tiny_breaker(submodels_loc: dict, refiner_type: str) -> dict:
+def make_tiny_breaker(submodels_loc: dict, refiner_type: str) -> StateDict:
     """
     Creates a TinyBreaker model from the given submodels.
     Args:
@@ -422,6 +531,9 @@ def main(args=None, parent_script=None):
     parser.add_argument("--color-always", help="Always use color output", action='store_true')
     args = parser.parse_args(args)
 
+    args_output_file     = "output"
+    args_auxiliary_paths = []
+
     # determine if color should be used
     use_color = args.color_always or (args.color and is_terminal_output())
     if not use_color:
@@ -434,15 +546,18 @@ def main(args=None, parent_script=None):
         fatal_error("You must specify either the SD model (--sd) or the SDXL model (--sdxl).")
     if args.sd and args.sdxl:
         fatal_error("You can't specify both the SD model (--sd) and the SDXL model (--sdxl).")
-    if not args.aux:
-        fatal_error("You must specify the auxiliary model file (--aux).",
-                    "An auxiliary model file is provided by default with the TinyBreaker project.")
-    if len(args.aux) > 1:
-        fatal_error("You can't specify more than one auxiliary model file (--aux).")
     if not args.res:
         fatal_error("You must specify the resolution for which the PixArt model was trained (--res).",
                     "This value is intrinsic to the PixArt model and determines the approximate size of the output image.",
                     "Typical values are 2048, 1024 or 512.")
+
+    # generate a list of paths to auxiliary models in `auxiliary_paths`,
+    # if the user did not provide any auxiliary model, then the default one will be used.
+    if args.aux:
+        args_auxiliary_paths = args.aux
+    elif os.path.exists(_DEFAULT_AUXILIARY_MODEL_PATH):
+        args_auxiliary_paths = [_DEFAULT_AUXILIARY_MODEL_PATH]
+
 
     submodels_loc = {}
 
@@ -462,7 +577,24 @@ def main(args=None, parent_script=None):
                          "Please ensure that you are using a valid SD model file.")
         submodels_loc.update(submodels_sd)
 
+    # collect the necessary submodels from all provided SDXL models
+    for sdxl_path in args.sdxl or []:
+        submodels_sdxl = find_sdxl_submodels(sdxl_path)
+        if not submodels_sdxl:
+            fatal_error(f"Cannot find a necessary tensor in '{os.path.basename(sdxl_path)}'",
+                         "Please ensure that you are using a valid SDXL model file.")
+        submodels_loc.update(submodels_sdxl)
+
+    # collect the necessary submodels from all provided auxiliary models
+    for aux_path in args_auxiliary_paths:
+        submodels_aux = find_auxiliary_submodels(aux_path)
+        if not submodels_aux:
+            fatal_error(f"Cannot find a necessary tensor in '{os.path.basename(aux_path)}'",
+                         "Please ensure that you are using a valid auxiliary model file.")
+        submodels_loc.update(submodels_aux)
+
     state_dict = make_tiny_breaker(submodels_loc, refiner_type = "sdxl" if args.sdxl else "sd15" )
+    state_dict.save_as_safetensors(args_output_file, overwrite=False)
 
 
 
