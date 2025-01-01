@@ -38,7 +38,8 @@ import struct
 import argparse
 if __name__ == '__main__' and ("-h" not in sys.argv and "--help" not in sys.argv):
     # modules that are not available in the standard library are imported here
-    import numpy
+    import numpy as np
+    from tqdm              import tqdm
     from safetensors       import safe_open
     from safetensors.numpy import save_file as save_safetensors
 
@@ -261,7 +262,7 @@ class StateDict(dict):
         filter_prefix1 = prefix + (subprefix1 or "")
         filter_prefix2 = prefix + (subprefix2 or "")
 
-        state_dict = StateDict()
+        state_dict = cls()
         with safe_open(path, framework="numpy", device="cpu") as f:
             for key in f.keys():
                 if key.startswith(filter_prefix1) or key.startswith(filter_prefix2):
@@ -292,17 +293,9 @@ class StateDict(dict):
         The prefix is always removed from the keys in the returned StateDict.
         Subprefixes are not removed.
         """
-
         if not isinstance(path_and_prefix, tuple) or len(path_and_prefix) != 2:
-            path_and_prefix = ("", "")
+            return cls()
         return cls.from_file(path_and_prefix[0], path_and_prefix[1], subprefix1, subprefix2)
-
-
-    def with_prefix(self,
-                    prefix    : str
-                    ) -> "StateDict":
-        prefix = normalize_prefix(prefix)
-        return StateDict( { prefix + k: v for k, v in self.items() } )
 
 
     def save_as_safetensors(self,
@@ -310,7 +303,8 @@ class StateDict(dict):
                             metadata : dict = None,
                             overwrite: bool = False,
                             ) -> None:
-        """Saves the tensors in this StateDict as a safetensors file at 'path'.
+        """
+        Saves the tensors in this StateDict as a safetensors file at 'path'.
         Args:
             path      (str) : The file path to save the safetensors file.
             metadata  (dict): A dictionary containing additional metadata for the safetensors file.
@@ -324,6 +318,24 @@ class StateDict(dict):
             path = find_unique_path(path)
         save_safetensors( self, filename=path, metadata=metadata )
 
+
+    def to(self, dtype: np.dtype) -> "StateDict":
+        """
+        Casts all tensors in the StateDict to the specified dtype, modifying the StateDict in-place.
+        Args:
+            dtype (np.dtype): The desired dtype for the tensors.
+        Returns:
+            Returns self for chaining.
+        """
+        for key, tensor in self.items():
+            self[key] = tensor.astype(dtype)
+        return self
+
+
+    def with_prefix(self, prefix: str) -> "StateDict":
+        """Returns a new StateDict with all keys prefixed by 'prefix'."""
+        prefix = normalize_prefix(prefix)
+        return StateDict( { prefix + k: v for k, v in self.items() } )
 
 
 #---------------------------- SUBMODEL FINDERS -----------------------------#
@@ -445,37 +457,22 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
     if not _FSTAGE_VAE_SD_DECODER in submodels_loc:
         fatal_error("Missing first stage HQ decoder.", "Some model containing a SD1.5 VAE decoder must be provided.")
 
-    # load the submodels
-    fstage_hqmodel_enc = StateDict()
-    fstage_hqmodel_dec = StateDict.from_location(submodels_loc.get(FSTAGE_HQMODEL_DEC), "decoder", "post_quant_conv")
-    fstage_model_enc   = StateDict.from_location(submodels_loc.get(FSTAGE_MODEL_ENC  ), "encoder")
-    fstage_model_dec   = StateDict.from_location(submodels_loc.get(FSTAGE_MODEL_DEC  ), "decoder")
-    base_model         = StateDict.from_location(submodels_loc.get(_BASE_MODEL       ))
-    transcoder_model   = StateDict.from_location(submodels_loc.get(_TRANSCODER       ))
-    refiner_model      = StateDict.from_location(submodels_loc.get(REFINER_MODEL     ))
-    refiner_cond       = StateDict.from_location(submodels_loc.get(REFINER_COND      ))
+    load_submodels = [
+      # prefix                  |  StateDict.from_location( ...parameters... )                         |
+#     ("first_stage_hqmodel"    , (submodels_loc.get(FSTAGE_HQMODEL_ENC), "encoder", "quant_conv"     )),
+      ("first_stage_hqmodel"    , (submodels_loc.get(FSTAGE_HQMODEL_DEC), "decoder", "post_quant_conv")),
+      ("first_stage_model"      , (submodels_loc.get(FSTAGE_MODEL_ENC  ), "encoder"                   )),
+      ("first_stage_model"      , (submodels_loc.get(FSTAGE_MODEL_DEC  ), "decoder"                   )),
+      ("base.diffusion_model"   , (submodels_loc.get(_BASE_MODEL       ),                             )),
+      ("transcoder"             , (submodels_loc.get(_TRANSCODER       ),                             )),
+      ("refiner.diffusion_model", (submodels_loc.get(REFINER_MODEL     ),                             )),
+      ("refiner.conditioner"    , (submodels_loc.get(REFINER_COND      ),                             )),
+    ]
+    state_dict = StateDict()
+    for prefix, from_location_args in tqdm(load_submodels, desc="Loading submodels", unit="model"):
+        submodel = StateDict.from_location(*from_location_args).with_prefix(prefix).to(np.float16)
+        state_dict.update(submodel)
 
-    # add the prefixes to each submodel
-    fstage_hqmodel_enc = fstage_hqmodel_enc.with_prefix("first_stage_hqmodel")
-    fstage_hqmodel_dec = fstage_hqmodel_dec.with_prefix("first_stage_hqmodel")
-    fstage_model_enc   = fstage_model_enc.with_prefix("first_stage_model")
-    fstage_model_dec   = fstage_model_dec.with_prefix("first_stage_model")
-    base_model         = base_model.with_prefix("base.diffusion_model")
-    transcoder_model   = transcoder_model.with_prefix("transcoder")
-    refiner_model      = refiner_model.with_prefix("refiner.diffusion_model")
-    refiner_cond       = refiner_cond.with_prefix("refiner.conditioner")
-
-    # create the TinyBreaker model combining all the submodels
-    state_dict = StateDict({
-        **fstage_hqmodel_enc,
-        **fstage_hqmodel_dec,
-        **fstage_model_enc,
-        **fstage_model_dec,
-        **base_model,
-        **transcoder_model,
-        **refiner_model,
-        **refiner_cond,
-    })
     return state_dict
 
 
