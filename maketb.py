@@ -1,6 +1,6 @@
 """
-  File    : tbmake.py
-  Purpose : TinyBreaker Maker
+  File    : maketb.py
+  Purpose : Creates TinyBreaker models by fusing PixArt with SD
   Author  : Martin Rizzo | <martinrizzo@gmail.com>
   Date    : Jan 1, 2025
   Repo    : https://github.com/martin-rizzo/TBMake
@@ -530,13 +530,13 @@ def main(args=None, parent_script=None):
         description="A command-line tool for creating TinyBreaker models by fusing PixArt with SD.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument(      "--pixart", help="Path to the PixArt model file used as base model.", nargs='*')
-    parser.add_argument(      "--sd"    , help="Path to the SD model used as refiner.", nargs='*')
-    parser.add_argument(      "--sdxl"  , help="Path to the SDXL model used as refiner.", nargs='*')
-    parser.add_argument("-a", "--aux"   , help="Path to the auxiliary models", nargs='*')
-    parser.add_argument("-r", "--res"   , help="The resolution for which the PixArt model was trained.", type=int, default=None)
-    parser.add_argument("-c", "--color" , help="Use color output when connected to a terminal", action='store_true')
-    parser.add_argument("--color-always", help="Always use color output", action='store_true')
+    parser.add_argument(      "--pixart"    , help="Path to the PixArt model file used as base model.", nargs='*')
+    parser.add_argument(      "--sd"        , help="Path to the SD model used as refiner.", nargs='*')
+    parser.add_argument(      "--sdxl"      , help="Path to the SDXL model used as refiner.", nargs='*')
+    parser.add_argument("-a", "--aux"       , help="Path to the auxiliary models", nargs='*')
+    parser.add_argument("-r", "--resolution", help="The resolution for which the PixArt model was trained.", type=int, default=None)
+    parser.add_argument("-c", "--color"     , help="Use color output when connected to a terminal", action='store_true')
+    parser.add_argument("--color-always"    , help="Always use color output", action='store_true')
     args = parser.parse_args(args)
 
     args_output_file     = "output"
@@ -554,7 +554,7 @@ def main(args=None, parent_script=None):
         fatal_error("You must specify either the SD model (--sd) or the SDXL model (--sdxl).")
     if args.sd and args.sdxl:
         fatal_error("You can't specify both the SD model (--sd) and the SDXL model (--sdxl).")
-    if not args.res:
+    if not args.resolution:
         fatal_error("You must specify the resolution for which the PixArt model was trained (--res).",
                     "This value is intrinsic to the PixArt model and determines the approximate size of the output image.",
                     "Typical values are 2048, 1024 or 512.")

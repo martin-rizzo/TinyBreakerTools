@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# File    : tbmake.sh
-# Brief   : Wrapper for `tbmake.py` that automatically handles the python virtual env
+# File    : maketb.sh
+# Brief   : Wrapper for `maketb.py` that automatically handles the python virtual env
 # Author  : Martin Rizzo | <martinrizzo@gmail.com>
 # Date    : Jan 1, 2025
 # Repo    : https://github.com/martin-rizzo/TBMake
