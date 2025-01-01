@@ -41,7 +41,7 @@ if __name__ == '__main__' and ("-h" not in sys.argv and "--help" not in sys.argv
     import numpy as np
     from tqdm              import tqdm
     from safetensors       import safe_open
-    from safetensors.numpy import save_file as save_safetensors
+    from safetensors.numpy import save as safetensors_bytes
 
 # directory where this script is located
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -87,30 +87,30 @@ RED    = '\033[91m'
 GREEN  = '\033[92m'
 YELLOW = '\033[93m'
 CYAN   = '\033[96m'
-DARK_GRAY = '\033[90m'
-DEFAULT_COLOR = '\033[0m'
+DKGRAY = '\033[90m'
+RESET  = '\033[0m'
 
 #----------------------------- ERROR MESSAGES ------------------------------#
 
 def disable_colors():
-    global RED, GREEN, YELLOW, CYAN, DEFAULT_COLOR
-    RED, GREEN, YELLOW, CYAN, DEFAULT_COLOR = '', '', '', '', ''
+    global RED, GREEN, YELLOW, CYAN, DKGRAY, RESET
+    RED, GREEN, YELLOW, CYAN, DKGRAY, RESET = "", "", "", "", "", ""
 
 def warning(message: str, *info_messages: str) -> None:
     """Displays and logs a warning message to the standard error stream.
     """
     print()
-    print(f"{CYAN}[{YELLOW}WARNING{CYAN}]{DEFAULT_COLOR} {message}", file=sys.stderr)
+    print(f"{CYAN}[{YELLOW}WARNING{CYAN}]{RESET} {message}", file=sys.stderr)
     for info_message in info_messages:
-        print(f"          {YELLOW}{info_message}{DEFAULT_COLOR}", file=sys.stderr)
+        print(f"          {YELLOW}{info_message}{RESET}", file=sys.stderr)
 
 def error(message: str, *info_messages: str) -> None:
     """Displays and logs an error message to the standard error stream.
     """
     print()
-    print(f"{CYAN}[{RED}ERROR{CYAN}]{DEFAULT_COLOR} {message}", file=sys.stderr)
+    print(f"{CYAN}[{RED}ERROR{CYAN}]{RESET} {message}", file=sys.stderr)
     for info_message in info_messages:
-        print(f"          {RED}{info_message}{DEFAULT_COLOR}", file=sys.stderr)
+        print(f"          {RED}{info_message}{RESET}", file=sys.stderr)
 
 def fatal_error(message: str, *info_messages: str) -> None:
     """Displays and logs an fatal error to the standard error stream and exits.
@@ -120,7 +120,7 @@ def fatal_error(message: str, *info_messages: str) -> None:
     """
     error(message)
     for info_message in info_messages:
-        print(f" {CYAN}\u24d8  {info_message}{DEFAULT_COLOR}", file=sys.stderr)
+        print(f" {CYAN}\u24d8  {info_message}{RESET}", file=sys.stderr)
     print()
     exit(1)
 
@@ -148,10 +148,10 @@ def print_submodel_loc(name: str, location: tuple, no_location_message: str = No
     """Prints the location of a submodel that will be part of the Tiny Breaker model."""
     path, prefix = location if location else ("", "")
     filename_and_prefix = no_location_message or "---"
-    file_color          = YELLOW if filename_and_prefix != no_location_message else DARK_GRAY
+    file_color          = YELLOW if filename_and_prefix != no_location_message else DKGRAY
     if path:
-        filename_and_prefix = f"{os.path.basename(path)}  {DARK_GRAY}({prefix}*)"
-    print(f"  {CYAN}+ {name:<24}:{DEFAULT_COLOR} {file_color}{filename_and_prefix}{DEFAULT_COLOR}")
+        filename_and_prefix = f"{os.path.basename(path)}  {DKGRAY}({prefix}*)"
+    print(f"  {CYAN}+ {name:<24}:{RESET} {file_color}{filename_and_prefix}{RESET}")
 
 
 def normalize_prefix(prefix: str) -> str:
@@ -312,11 +312,19 @@ class StateDict(dict):
         """
         if not get_file_extension(path):
             path += ".safetensors"
-
-        # save the tensors and metadata to the file
         if not overwrite:
             path = find_unique_path(path)
-        save_safetensors( self, filename=path, metadata=metadata )
+
+        # serialize the tensor dictionary and metadata into bytes using safetensors library
+        byte_data = safetensors_bytes(self, metadata=metadata )
+
+        # write the binary data to the file displaying a progress bar
+        chunk_size = 1024 * 1024
+        with open(path, "wb") as f:
+            with tqdm(total=len(byte_data), unit="B", unit_scale=True, desc="Saving safetensors") as pbar:
+                for i in range(0, len(byte_data), chunk_size):
+                    f.write(byte_data[i:i+chunk_size])
+                    pbar.update( min(len(byte_data)-i, chunk_size) )
 
 
     def to(self, dtype: np.dtype) -> "StateDict":
@@ -440,6 +448,8 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
     REFINER_COND       = _REFINER_COND_SD         # <- SD1.5
 
     # show information about any submodel that will be used to create the TinyBreaker model
+    print()
+    print(f"{CYAN}TinyBreaker submodels{RESET}")
     print_submodel_loc("first stage HQ .encoder"  , submodels_loc.get(FSTAGE_HQMODEL_ENC), ">> discarded")
     print_submodel_loc("first stage HQ .decoder"  , submodels_loc.get(FSTAGE_HQMODEL_DEC))
     print_submodel_loc("first stage    .encoder"  , submodels_loc.get(FSTAGE_MODEL_ENC  ))
@@ -449,6 +459,7 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
     print_submodel_loc("transcoder"               , submodels_loc.get(_TRANSCODER       ))
     print_submodel_loc("refiner model"            , submodels_loc.get(REFINER_MODEL     ))
     print_submodel_loc("refiner conditioner "     , submodels_loc.get(REFINER_COND      ))
+    print()
 
     if not _FSTAGE_TINY_XL_ENCODER in submodels_loc:
         fatal_error("Missing first stage encoder.", "Some model containing a Tiny SDXL VAE encoder must be provided.")
@@ -469,7 +480,7 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
       ("refiner.conditioner"    , (submodels_loc.get(REFINER_COND      ),                             )),
     ]
     state_dict = StateDict()
-    for prefix, from_location_args in tqdm(load_submodels, desc="Loading submodels", unit="model"):
+    for prefix, from_location_args in tqdm(load_submodels, desc="Loading submodels ", unit="model"):
         submodel = StateDict.from_location(*from_location_args).with_prefix(prefix).to(np.float16)
         state_dict.update(submodel)
 
@@ -592,6 +603,7 @@ def main(args=None, parent_script=None):
 
     state_dict = make_tiny_breaker(submodels_loc, refiner_type = "sdxl" if args.sdxl else "sd15" )
     state_dict.save_as_safetensors(args_output_file, overwrite=False)
+    print()
 
 
 
