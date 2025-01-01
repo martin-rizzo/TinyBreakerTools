@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # File    : maketb.sh
-# Brief   : Wrapper for `maketb.py` that automatically handles the python virtual env
+# Purpose : Wrapper for `maketb.py` that handles the python virtual environment
 # Author  : Martin Rizzo | <martinrizzo@gmail.com>
 # Date    : Jan 1, 2025
-# Repo    : https://github.com/martin-rizzo/TBMake
+# Repo    : https://github.com/martin-rizzo/TinyBreakerTool
 # License : MIT
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-#                              TinyBreaker Maker
-#   A command-line tool for creating TinyBreaker models by fusing PixArt with SD
+#                              Tiny Breaker Tool
+#       A set of scripts for creating and handling Tiny Breaker models.
 #
 #     Copyright (c) 2025 Martin Rizzo
 #

@@ -19,8 +19,8 @@ english:
 Currently, `maketb` is a command-line tool and does not require installation via pip. Simply clone the repository and ensure you have the required dependencies (e.g., PyTorch, Transformers, etc.) installed.
 
 ```bash
-  git clone https://github.com/martin-rizzo/TBMake
-  cd TBMake
+  git clone https://github.com/martin-rizzo/TinyBreakerTool
+  cd TinyBreakerTool
   # create the python virtual environment with the dependencies of the project
   ./maketb.sh --create-venv
 ```
