@@ -327,7 +327,7 @@ class StateDict(dict):
                     pbar.update( min(len(byte_data)-i, chunk_size) )
 
 
-    def to(self, dtype: np.dtype) -> "StateDict":
+    def to(self, dtype) -> "StateDict":
         """
         Casts all tensors in the StateDict to the specified dtype, modifying the StateDict in-place.
         Args:
