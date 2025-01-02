@@ -47,20 +47,20 @@ NON_ESSENTIAL_OPTIONS=( "-c" "--color" "--color-always" )
 RED='\e[91m'
 CYAN='\e[96m'
 YELLOW='\e[93m'
-DEFAULT_COLOR='\e[0m'
+RESET='\e[0m'
 
 # Display a warning message
 warning() {
     local message=$1
     echo
-    echo -e "${CYAN}[${YELLOW}WARNING${CYAN}]${DEFAULT_COLOR} $message" >&2
+    echo -e "${CYAN}[${YELLOW}WARNING${CYAN}]${RESET} $message" >&2
 }
 
 # Display an error message
 error() {
     local message=$1
     echo
-    echo -e "${CYAN}[${RED}ERROR${CYAN}]${DEFAULT_COLOR} $message" >&2
+    echo -e "${CYAN}[${RED}ERROR${CYAN}]${RESET} $message" >&2
 }
 
 # Displays a fatal error message and exits the script with status code 1
@@ -71,7 +71,7 @@ fatal_error() {
     # print informational messages, if any were provided
     while [[ $# -gt 0 ]]; do
         local info_message=$1
-        echo -e " ${CYAN}\xF0\x9F\x9B\x88 $info_message${DEFAULT_COLOR}" >&2
+        echo -e " ${CYAN}\xF0\x9F\x9B\x88 $info_message${RESET}" >&2
         shift
     done
     echo
@@ -80,26 +80,37 @@ fatal_error() {
 
 # Create and activate the python virtual environment
 create_venv() {
-    if [[ -d "venv" ]]; then
+    if [[ -d "$VENV_DIR" ]]; then
         echo "Virtual environment already exists."
         return
     fi
     echo "Creating virtual environment..."
-    if ! python3 -m venv "${VENV_DIR}"; then
+    if ! python3 -m venv "$VENV_DIR"; then
         fatal_error "Virtual environment creation failed." \
                     "Please check if python3 and venv are installed on your system."
     fi
     echo "Virtual environment created."
 }
 
+# Remove the python virtual environment
+remove_venv() {
+    if [[ ! -d "$VENV_DIR" ]]; then
+        fatal_error "No 'venv' directory found." \
+                    "You must create a virtual environment before removing it." \
+                    "Use the '--create-venv' option to create a new one."
+    fi
+    rm -rf "$VENV_DIR"
+    echo "Virtual environment removed."
+}
+
 # Activate the python virtual environment
 activate_venv() {
-    if [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
+    if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
         fatal_error "The virtual environment does not exist." \
                     "you can use --create-venv to create it"
     fi
     # shellcheck disable=SC1091
-    if ! source "${VENV_DIR}/bin/activate"; then
+    if ! source "$VENV_DIR/bin/activate"; then
         fatal_error "Error when activating virtual environment, it might be corrupted." \
                     "You can use --recreate-venv to recreate the virtual environment."
     fi
@@ -183,13 +194,7 @@ fi
 
 # handle the extra options for removing the venv
 if [[ "$REMOVE_VENV" == true ]]; then
-    if [[ ! -d "venv" ]]; then
-        fatal_error "No 'venv' directory found." \
-            "You must create a virtual environment before removing it." \
-            "Use the '--create-venv' option to create a new one."
-    fi
-    rm -rf venv
-    echo "Virtual environment removed."
+    remove_venv
     exit 0
 fi
 
