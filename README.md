@@ -10,7 +10,7 @@
 </p>
 
 <!-- Image -->
-<!-- ![Tiny Breaker Tools](./demo_images/maketb.jpg) -->
+![Tiny Breaker Tools](./console.png)
 </div>
 
 `maketb` is a command-line tool designed to create TinyBreaker models. These models combine the strengths of a PixArt model with a refiner model (either SD1.5 or SDXL) to generate high-quality images.
