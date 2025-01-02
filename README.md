@@ -13,19 +13,25 @@
 ![Tiny Breaker Tools](./console.png)
 </div>
 
-`maketb` is a command-line tool designed to create TinyBreaker models. These models combine the strengths of a PixArt model with a refiner model (either SD1.5 or SDXL) to generate high-quality images.
+**Tiny Breaker Tools** is a collection of command-line scripts designed for the creation and manipulation of "Tiny Breaker" models.
+
+The following command is currently available:
+
+- `maketb`: A command-line tool for creating custom Tiny Breaker models.
+
+   *More tools are under development.*
 
 
-## Overview
+## Tiny Breaker Model Overview
 
-TinyBreaker models are built by merging a pre-trained PixArt model with a refiner model. This combination allows for efficient and effective image generation, leveraging the strengths of both architectures. The `maketb` tool simplifies this process, allowing users to create their custom TinyBreaker models by specifying the desired models and parameters.
+Tiny Breaker models are constructed by merging a pre-trained PixArt model with a Stable Diffusion (SD) refiner model. This strategic combination leverages the efficient generative capabilities of PixArt with the refinement power of SD models, resulting in high-quality image generation.
 
 
-## Features
+## Key Features
 
- - **Support PixArt model resolutions:** Allows you to integrate pixart models of different resolutions 512px, 1024px, 2048px
- - **Flexible Refiner Selection:** Supports both SD1.5 and SDXL refiner models.
- - **Simple Command-Line Interface:** Easy to use with clear command-line arguments.
+*   **Intuitive Command-Line Interface:**  The tools are designed for ease of use with clear and concise command-line arguments.
+*   **Support for Multiple PixArt Resolutions:** Allows integration of PixArt models with various resolutions, including 512px, 1024px, and 2048px.
+*   **Flexible Refiner Model Selection:** Supports both Stable Diffusion 1.5 (SD1.5) and Stable Diffusion XL (SDXL) refiner models.
 
 
 ## Installation
