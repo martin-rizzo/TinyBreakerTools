@@ -419,7 +419,7 @@ def find_auxiliary_submodels(file_path: str) -> dict:
     prefixes[_FSTAGE_TINY_SD_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="sd")
     prefixes[_FSTAGE_TINY_XL_ENCODER] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="xl")
     prefixes[_FSTAGE_TINY_XL_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="xl")
-    prefixes[_TRANSCODER            ] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="transcoder")
+    prefixes[_TRANSCODER            ] = find_tensor_prefix(header, suffix="transe.3.conv.4.weight" , containing="transcoder")
 
     # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
     locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
