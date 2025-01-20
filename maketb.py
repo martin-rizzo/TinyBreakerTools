@@ -34,8 +34,10 @@
 import os
 import sys
 import json
+import base64
 import struct
 import argparse
+from datetime import datetime
 if __name__ == '__main__' and ("-h" not in sys.argv and "--help" not in sys.argv):
     # modules that are not available in the standard library are imported here
     import numpy as np
@@ -147,11 +149,11 @@ def find_unique_path(path: str) -> str:
 def print_submodel_loc(name: str, location: tuple, no_location_message: str = None) -> None:
     """Prints the location of a submodel that will be part of the Tiny Breaker model."""
     path, prefix = location if location else ("", "")
-    filename_and_prefix = no_location_message or "---"
-    file_color          = YELLOW if filename_and_prefix != no_location_message else DKGRAY
     if path:
-        filename_and_prefix = f"{os.path.basename(path)}  {DKGRAY}({prefix}*)"
-    print(f"  {CYAN}+ {name:<24}:{RESET} {file_color}{filename_and_prefix}{RESET}")
+        filename_and_prefix = f"{YELLOW}{os.path.basename(path)}  {DKGRAY}({prefix}*)"
+    else:
+        filename_and_prefix = no_location_message or f"{RED}missing!"
+    print(f"  {CYAN}+ {name:<24}:{RESET} {filename_and_prefix}{RESET}")
 
 
 def normalize_prefix(prefix: str) -> str:
@@ -300,8 +302,9 @@ class StateDict(dict):
 
     def save_as_safetensors(self,
                             path     : str,
-                            metadata : dict = None,
-                            overwrite: bool = False,
+                            *,# keyword-only arguments #
+                            metadata : dict[str, str] = None,
+                            overwrite: bool           = False,
                             ) -> None:
         """
         Saves the tensors in this StateDict as a safetensors file at 'path'.
@@ -425,6 +428,83 @@ def find_auxiliary_submodels(file_path: str) -> dict:
     locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
     return locations
 
+#-------------------------------- METADATA ---------------------------------#
+
+def read_thumbnail_in_base64(path: str) -> str:
+    """Returns the thumbnail image from the given path as a base64 encoded string."""
+    try:
+        # check if the file exists
+        if not os.path.exists(path):
+            fatal_error(f"File '{path}' does not exist.")
+
+        # check if the file size exceeds 30 KB
+        file_size_kb = os.path.getsize(path) / 1024
+        if file_size_kb > 30:
+            fatal_error("Thumbnail is too large, it will not be loaded.",
+                        "It is recommended to use an image smaller than 30 KB with a resolution of 256x256.")
+
+        # read the binary data from the file and convert to base64
+        with open(path, 'rb') as file:
+            binary_data = file.read()
+        base64_data = base64.b64encode(binary_data).decode('utf-8')
+        return base64_data
+
+    except IOError:
+        fatal_error(f"Error reading the file '{path}'.")
+
+
+def make_metadata(resolution: int,
+                  *,# keyword-only arguments #
+                  title         : str = None,
+                  description   : str = None,
+                  author        : str = None,
+                  license       : str = None,
+                  thumbnail_path: str = None,
+                  ) -> dict[str, str]:
+    """
+    Creates a dictionary containing metadata for the model.
+    Args:
+        resolution    : The resolution of the model.
+        title         : The title of the model.
+        description   : The description of the model.
+        author        : The author of the model.
+        license       : The license under which the model is distributed.
+        thumbnail_path: The path to the thumbnail image.
+    Returns:
+        A dictionary containing the metadata for the model.
+    """
+    # check if thumbnail is a jpg file
+    thumbnail_ext = os.path.splitext(thumbnail_path)[1].lower()
+    if thumbnail_ext not in [".jpg", ".jpeg"]:
+        fatal_error(f"Thumbnail must be a jpg file, but '{thumbnail_path}' is a {thumbnail_ext} file.")
+
+    # la fecha debe estar en isoformat pero solo la fecha, no la hora ni nada mas
+
+    iso_8601_date    = datetime.now().strftime("%Y-%m-%d")
+    thumbnail_base64 = read_thumbnail_in_base64(thumbnail_path) if thumbnail_path else None
+    title            = title       or "TinyBreaker model"
+    description      = description or "TinyBreaker is a hybrid model, a convergence of the poetic energy of PixArt and the explosive depth of SD1."
+
+    # fill the required fields
+    metadata = {
+        "modelspec.sai_model_spec": "1.0.0",
+        "modelspec.architecture"  : "TinyBreaker",
+        "modelspec.implementation": "reference",
+        "modelspec.title"         : title,
+        "modelspec.resolution"    : f"{resolution}x{resolution}",
+        "modelspec.description"   : description,
+        "modelspec.date"          : iso_8601_date,
+    }
+    # fill the optional fields
+    if author:
+        metadata["modelspec.author"] = author
+    if license:
+        metadata["modelspec.license"] = license
+    if thumbnail_base64:
+        metadata["modelspec.thumbnail"] = "data:image/jpeg;base64," + thumbnail_base64
+
+    return metadata
+
 
 #------------------------------ TINY BREAKER -------------------------------#
 
@@ -530,16 +610,22 @@ def main(args=None, parent_script=None):
         description="A command-line tool for creating TinyBreaker models by fusing PixArt with SD.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument(      "--pixart"    , help="Path to the PixArt model file used as base model.", nargs='*')
-    parser.add_argument(      "--sd"        , help="Path to the SD model used as refiner.", nargs='*')
-    parser.add_argument(      "--sdxl"      , help="Path to the SDXL model used as refiner.", nargs='*')
-    parser.add_argument("-a", "--aux"       , help="Path to the auxiliary models", nargs='*')
-    parser.add_argument("-r", "--resolution", help="The resolution for which the PixArt model was trained.", type=int, default=None)
-    parser.add_argument("-c", "--color"     , help="Use color output when connected to a terminal", action='store_true')
-    parser.add_argument("--color-always"    , help="Always use color output", action='store_true')
+    parser.add_argument(      "--pixart"     , help="Path to the PixArt model file used as base model.", nargs='*')
+    parser.add_argument(      "--sd"         , help="Path to the SD model used as refiner.", nargs='*')
+    parser.add_argument(      "--sdxl"       , help="Path to the SDXL model used as refiner.", nargs='*')
+    parser.add_argument(      "--aux"        , help="Path to the auxiliary models", nargs='*')
+    parser.add_argument("-r", "--resolution" , help="The resolution for which the PixArt model was trained.", type=int, default=None)
+    parser.add_argument("-t", "--title"      , help="The title of the model. e.g. 'TinyBreaker model'", type=str, default=None)
+    parser.add_argument("-d", "--description", help="The description of the model. e.g. 'TinyBreaker model trained on 10k images'", type=str, default=None)
+    parser.add_argument("-a", "--author"     , help="The author of the model.", type=str, default=None)
+    parser.add_argument("-l", "--license"    , help="The license of the model. e.g. 'CC BY-NC-SA 4.0'", type=str, default=None)
+    parser.add_argument(      "--thumbnail"  , help="The path to the thumbnail image for the model.", type=str, default=None)
+    parser.add_argument("-o", "--output"     , help="the output file name", type=str, default="output")
+    parser.add_argument("-c", "--color"      , help="Use color output when connected to a terminal", action='store_true')
+    parser.add_argument("--color-always"     , help="Always use color output", action='store_true')
     args = parser.parse_args(args)
 
-    args_output_file     = "output"
+    args_output_file     = args.output
     args_auxiliary_paths = []
 
     # determine if color should be used
@@ -601,9 +687,22 @@ def main(args=None, parent_script=None):
                          "Please ensure that you are using a valid auxiliary model file.")
         submodels_loc.update(submodels_aux)
 
+    # generate model and metadata
     state_dict = make_tiny_breaker(submodels_loc, refiner_type = "sdxl" if args.sdxl else "sd15" )
-    state_dict.save_as_safetensors(args_output_file, overwrite=False)
+    metadata   = make_metadata(resolution     = args.resolution,
+                               title          = args.title,
+                               description    = args.description,
+                               author         = args.author,
+                               license        = args.license,
+                               thumbnail_path = args.thumbnail)
+
+    # save model
+    state_dict.save_as_safetensors(args_output_file,
+                                   metadata  = metadata,
+                                   overwrite = False)
     print()
+
+
 
 
 
