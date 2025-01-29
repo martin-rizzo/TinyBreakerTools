@@ -228,6 +228,47 @@ def find_tensor_prefix(state_dict    : dict,
     return ""
 
 
+def load_kv_file(path: str) -> dict[str, str]:
+    """
+    Loads a file with key-value pairs and returns a dictionary containing them.
+
+    The file has a key-value format similar to .ini files. e.g.: "key = value",
+    but it supports ':' and corrects commas and semicolons at the end of the line.
+    Returns:
+        A dictionary containing the key-value pairs from the file.
+    """
+    try:
+        with open(path, 'r') as file:
+            content = file.read()
+    except Exception as e:
+        fatal_error(f"Error reading the file '{path}': {e}")
+
+    output = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if   line.endswith(','): line = line[:-1]
+        elif line.endswith(';'): line = line[:-1]
+        if   ':' in line: separator = ':'
+        elif '=' in line: separator = '='
+        else:
+            fatal_error(f"Invalid file format: '{line}' is not a valid key-value pair.")
+
+        # split the line into a key-value pair
+        key, value = line.split(separator, 1)
+        key, value = key.strip(), value.strip()
+
+        # remove quotes from string values
+        if (value.startswith('"') and value.endswith('"')) or \
+           (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+
+        output[key] = str(value)
+
+    return output
+
+
 #---------------------------- STATE DICT CLASS -----------------------------#
 
 class StateDict(dict):
@@ -619,6 +660,7 @@ def main(args=None, parent_script=None):
     parser.add_argument("-d", "--description", help="The description of the model. e.g. 'TinyBreaker model trained on 10k images'", type=str, default=None)
     parser.add_argument("-a", "--author"     , help="The author of the model.", type=str, default=None)
     parser.add_argument("-l", "--license"    , help="The license of the model. e.g. 'CC BY-NC-SA 4.0'", type=str, default=None)
+    parser.add_argument("-m", "--metadata"   , help="A .ini file containing any extra metadata to include in the model.", type=str, default=None)
     parser.add_argument(      "--thumbnail"  , help="The path to the thumbnail image for the model.", type=str, default=None)
     parser.add_argument("-o", "--output"     , help="the output file name", type=str, default="output")
     parser.add_argument("-c", "--color"      , help="Use color output when connected to a terminal", action='store_true')
@@ -695,6 +737,12 @@ def main(args=None, parent_script=None):
                                author         = args.author,
                                license        = args.license,
                                thumbnail_path = args.thumbnail)
+
+    # try to load the extra metadata from the provided .ini file
+    extra_metadata = load_kv_file(args.metadata) if args.metadata else None
+    if extra_metadata:
+        extra_metadata.update(metadata)
+        metadata = extra_metadata
 
     # save model
     state_dict.save_as_safetensors(args_output_file,
