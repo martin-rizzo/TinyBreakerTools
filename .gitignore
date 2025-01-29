@@ -31,7 +31,5 @@ venv/
 
 # auxiliary files
 #
-auxiliary.safetensors
-auxiliary_todelete.safetensors
 tinybreaker.sh
 
