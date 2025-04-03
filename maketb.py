@@ -61,7 +61,7 @@ _FSTAGE_TINY_SD_DECODER = "first_stage_model (sd,decoder)"
 _FSTAGE_TINY_XL_DECODER = "first_stage_model (xl,decoder)"
 _BASE_MODEL             = "base.model"
 _BASE_COND              = "base.conditioner"
-_TRANSCODER             = "transcoder"
+_TRANSCODER_XL_SD       = "transcoder"
 _REFINER_MODEL_SD       = "refiner.model (sd)"
 _REFINER_MODEL_XL       = "refiner.model (xl)"
 _REFINER_COND_SD        = "refiner.conditioner (sd)"
@@ -148,12 +148,14 @@ def find_unique_path(path: str) -> str:
 
 def print_submodel_loc(name: str, location: tuple, no_location_message: str = None) -> None:
     """Prints the location of a submodel that will be part of the Tiny Breaker model."""
-    path, prefix = location if location else ("", "")
+    path, prefix        = location if location else ("", "")
+    filename            = os.path.basename(path).removesuffix(".safetensors")
+    no_location_message = f"{GREEN}{no_location_message}" if no_location_message else f"{RED}missing!"
     if path:
-        filename_and_prefix = f"{YELLOW}{os.path.basename(path)}  {DKGRAY}({prefix}*)"
+        filename_and_prefix = f"{YELLOW}{filename:<26}  {DKGRAY}/{prefix}*"
     else:
-        filename_and_prefix = no_location_message or f"{RED}missing!"
-    print(f"  {CYAN}+ {name:<24}:{RESET} {filename_and_prefix}{RESET}")
+        filename_and_prefix = no_location_message
+    print(f"  {CYAN}+ {name:<26}:{RESET} {filename_and_prefix}{RESET}")
 
 
 def normalize_prefix(prefix: str) -> str:
@@ -341,6 +343,27 @@ class StateDict(dict):
         return cls.from_file(path_and_prefix[0], path_and_prefix[1], subprefix1, subprefix2)
 
 
+    @classmethod
+    def from_submodels(cls, submodel_descriptions: list[tuple]) -> "StateDict":
+        """
+        Creates a StateDict by combining the state dictionaries from multiple submodels.
+        Args:
+            submodel_descriptions (list[tuple]): A list of tuples, where each tuple contains:
+                - A prefix string: This prefix is added to the keys of the loaded state dictionary.
+                - A tuple: Arguments to be passed to the `from_location` class method,
+                           specifying the path and prefix for loading the submodel's state dictionary.
+        Returns:
+            StateDict: A StateDict containing the combined state dictionaries from all submodels.
+                       The keys in the returned StateDict will be prefixed with the provided prefix.
+                       Each submodel's state dictionary is converted to float16.
+        """
+        state_dict = cls()
+        for prefix, from_location_args in tqdm(submodel_descriptions, desc="Loading submodels ", unit="model"):
+            submodel = StateDict.from_location(*from_location_args).with_prefix(prefix).to(np.float16)
+            state_dict.update(submodel)
+        return state_dict
+
+
     def save_as_safetensors(self,
                             path     : str,
                             *,# keyword-only arguments #
@@ -463,7 +486,7 @@ def find_auxiliary_submodels(file_path: str) -> dict:
     prefixes[_FSTAGE_TINY_SD_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="sd")
     prefixes[_FSTAGE_TINY_XL_ENCODER] = find_tensor_prefix(header, suffix="encoder.3.conv.4.weight", containing="xl")
     prefixes[_FSTAGE_TINY_XL_DECODER] = find_tensor_prefix(header, suffix="decoder.3.conv.4.weight", containing="xl")
-    prefixes[_TRANSCODER            ] = find_tensor_prefix(header, suffix="transe.3.conv.4.weight" , containing="transcoder")
+    prefixes[_TRANSCODER_XL_SD      ] = find_tensor_prefix(header, suffix="transe.3.conv.4.weight" , containing="transcoder")
 
     # convert the `prefixes` to a dictionary of (file_path, prefix) tuples
     locations = { key: (file_path, prefix) for key, prefix in prefixes.items() if prefix is not None }
@@ -547,39 +570,43 @@ def make_metadata(resolution: int,
     return metadata
 
 
-#------------------------------ TINY BREAKER -------------------------------#
+#========================== TINY BREAKER CREATION ==========================#
 
-def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
+
+def make_prototype0_sd15(submodels_loc: dict) -> StateDict:
     """Creates a TinyBreaker model from a PixArt model (base) and a Stable Diffusion 1.5 model (refiner).
     Args:
-        submodels_loc (dict): A dictionary of submodel -> (file_path, prefix) with
-                              the location of the each submodel to be used.
-                              The `file_path` is the path to the model file.
-                              The `prefix` is the prefix of the tensors in the model
-                              file that belong to the submodel.
+        submodels_loc: A dictionary of "submodel" -> (file_path, prefix) with the
+                       location of the each submodel to be used.
+                       The `file_path` is the path to the model file.
+                       The `prefix` is the prefix of the tensors in the model file.
     """
-    # by default we will use different encoder and decoder for the VAE,
-    # a SDXL encoder to provide SDXL latent images to the PixArt model, and
-    # a SD1.5 decoder to decode the latent images from the refiner.
-    FSTAGE_MODEL_ENC   = _FSTAGE_TINY_XL_ENCODER  # <- Tiny SDXL
-    FSTAGE_MODEL_DEC   = _FSTAGE_TINY_SD_DECODER  # <- Tiny SD1.5
-    FSTAGE_HQMODEL_ENC = "discarded"
-    FSTAGE_HQMODEL_DEC = _FSTAGE_VAE_SD_DECODER   # <- SD1.5
-    REFINER_MODEL      = _REFINER_MODEL_SD        # <- SD1.5
-    REFINER_COND       = _REFINER_COND_SD         # <- SD1.5
+    # VAE + HQ-VAE
+    FSTAGE_MODEL_ENC   = _FSTAGE_TINY_XL_ENCODER  # <- Tiny SDXL   (encoder)
+    FSTAGE_MODEL_DEC   = _FSTAGE_TINY_SD_DECODER  # <- Tiny SD1.5  (decoder)
+    FSTAGE_HQMODEL_ENC = "discarded"              # None
+    FSTAGE_HQMODEL_DEC = _FSTAGE_VAE_SD_DECODER   # <- SD1.5 (decoder)
+    # BASE
+    BASE_MODEL = _BASE_MODEL  # <- PixArt
+    BASE_COND  = _BASE_COND   # <- T5 Encoder
+    # REFINER
+    REFINER_MODEL = _REFINER_MODEL_SD  # <- SD1.5
+    REFINER_COND  = _REFINER_COND_SD   # <- SD1.5
 
-    # show information about any submodel that will be used to create the TinyBreaker model
+    # show information about each submodel used to create TinyBreaker
     print()
-    print(f"{CYAN}TinyBreaker submodels{RESET}")
+    print(f"{CYAN}TinyBreaker prototype0 submodels{RESET}")
     print_submodel_loc("first stage HQ .encoder"  , submodels_loc.get(FSTAGE_HQMODEL_ENC), ">> discarded")
     print_submodel_loc("first stage HQ .decoder"  , submodels_loc.get(FSTAGE_HQMODEL_DEC))
     print_submodel_loc("first stage    .encoder"  , submodels_loc.get(FSTAGE_MODEL_ENC  ))
     print_submodel_loc("first stage    .decoder"  , submodels_loc.get(FSTAGE_MODEL_DEC  ))
-    print_submodel_loc("base model"               , submodels_loc.get(_BASE_MODEL       ))
-    print_submodel_loc("base conditioner"         , submodels_loc.get(_BASE_COND        ), ">> external t5-encoder text model")
-    print_submodel_loc("transcoder"               , submodels_loc.get(_TRANSCODER       ))
-    print_submodel_loc("refiner model"            , submodels_loc.get(REFINER_MODEL     ))
-    print_submodel_loc("refiner conditioner "     , submodels_loc.get(REFINER_COND      ))
+    print_submodel_loc("base model"               , submodels_loc.get(BASE_MODEL        ))
+    print_submodel_loc("base conditioner"         , submodels_loc.get(BASE_COND         ), ">> external t5-encoder")
+
+    print_submodel_loc("transcoder", submodels_loc.get(_TRANSCODER_XL_SD ))
+
+    print_submodel_loc("refiner model"      , submodels_loc.get(REFINER_MODEL))
+    print_submodel_loc("refiner conditioner", submodels_loc.get(REFINER_COND ))
     print()
 
     if not _FSTAGE_TINY_XL_ENCODER in submodels_loc:
@@ -589,51 +616,119 @@ def make_tiny_breaker_with_sd15(submodels_loc: dict) -> StateDict:
     if not _FSTAGE_VAE_SD_DECODER in submodels_loc:
         fatal_error("Missing first stage HQ decoder.", "Some model containing a SD1.5 VAE decoder must be provided.")
 
-    load_submodels = [
-      # prefix                  |  StateDict.from_location( ...parameters... )                         |
-#     ("first_stage_hqmodel"    , (submodels_loc.get(FSTAGE_HQMODEL_ENC), "encoder", "quant_conv"     )),
-      ("first_stage_hqmodel"    , (submodels_loc.get(FSTAGE_HQMODEL_DEC), "decoder", "post_quant_conv")),
-      ("first_stage_model"      , (submodels_loc.get(FSTAGE_MODEL_ENC  ), "encoder"                   )),
-      ("first_stage_model"      , (submodels_loc.get(FSTAGE_MODEL_DEC  ), "decoder"                   )),
-      ("base.diffusion_model"   , (submodels_loc.get(_BASE_MODEL       ),                             )),
-      ("transcoder"             , (submodels_loc.get(_TRANSCODER       ),                             )),
-      ("refiner.diffusion_model", (submodels_loc.get(REFINER_MODEL     ),                             )),
-      ("refiner.conditioner"    , (submodels_loc.get(REFINER_COND      ),                             )),
+    tinybreaker_submodels = [
+      #                     StateDict.from_location(path_and_prefix, subprefix1, subprefix2)          |
+      #--------------------------+------------------------------------+------------+------------------+
+      # prefix                   |          path_and_prefix           | subprefix1 | subprefix2       |
+      ("first_stage_hqmodel"    ,(submodels_loc.get(FSTAGE_HQMODEL_DEC), "decoder", "post_quant_conv")),
+      ("first_stage_model"      ,(submodels_loc.get(FSTAGE_MODEL_ENC  ), "encoder"                   )),
+      ("first_stage_model"      ,(submodels_loc.get(FSTAGE_MODEL_DEC  ), "decoder"                   )),
+      ("base.diffusion_model"   ,(submodels_loc.get(BASE_MODEL        ),                             )),
+      ("transcoder"             ,(submodels_loc.get(_TRANSCODER_XL_SD ),                             )),
+      ("refiner.diffusion_model",(submodels_loc.get(REFINER_MODEL     ),                             )),
+      ("refiner.conditioner"    ,(submodels_loc.get(REFINER_COND      ),                             )),
     ]
-    state_dict = StateDict()
-    for prefix, from_location_args in tqdm(load_submodels, desc="Loading submodels ", unit="model"):
-        submodel = StateDict.from_location(*from_location_args).with_prefix(prefix).to(np.float16)
-        state_dict.update(submodel)
-
-    return state_dict
+    return StateDict.from_submodels(tinybreaker_submodels)
 
 
-def make_tiny_breaker_with_sdxl(submodels_loc: dict) -> StateDict:
-    """Creates a TinyBreaker model from a PixArt model (base) and a SDXL model (refiner)."""
-    fatal_error("make_tiny_breaker_with_sdxl() is not implemented yet.",
+
+def make_prototype1_sd15(submodels_loc: dict) -> StateDict:
+    """Creates the TinyBreaker model (prototype1) with Stable Diffusion 1.5 as refiner.
+    Args:
+        submodels_loc: A dictionary of "submodel" -> (file_path, prefix) with the
+                       location of the each submodel to be used.
+                       The `file_path` is the path to the model file.
+                       The `prefix` is the prefix of the tensors in the model file.
+    """
+    # VAE
+    FSTAGE_MODEL_ENC = _FSTAGE_TINY_XL_ENCODER  # <- Tiny SDXL (encoder)
+    FSTAGE_MODEL_DEC = _FSTAGE_VAE_SD_DECODER   # <- SD1.5     (decoder)
+    # BASE
+    BASE_MODEL = _BASE_MODEL  # <- PixArt
+    BASE_COND  = _BASE_COND   # <- T5 Encoder
+    # REFINER
+    REFINER_FSTAGE_MODEL_ENC = _FSTAGE_TINY_SD_ENCODER  # <- Tiny SD1.5 (encoder)
+    REFINER_FSTAGE_MODEL_DEC = _FSTAGE_TINY_SD_DECODER  # <- Tiny SD1.5 (decoder)
+    REFINER_MODEL            = _REFINER_MODEL_SD        # <- SD1.5
+    REFINER_COND             = _REFINER_COND_SD         # <- SD1.5
+
+    # show information about each submodel used to create TinyBreaker
+    print()
+    print(f"{CYAN}TinyBreaker prototype1 submodels{RESET}")
+    print_submodel_loc("first stage .encoder", submodels_loc.get(FSTAGE_MODEL_ENC))
+    print_submodel_loc("first stage .decoder", submodels_loc.get(FSTAGE_MODEL_DEC))
+    print_submodel_loc("base model"          , submodels_loc.get(BASE_MODEL      ))
+    print_submodel_loc("base conditioner"    , submodels_loc.get(BASE_COND       ), ">> external t5-encoder")
+
+    print_submodel_loc("transcoder", submodels_loc.get(_TRANSCODER_XL_SD))
+
+    print_submodel_loc("refiner 1st stage .encoder", submodels_loc.get(REFINER_FSTAGE_MODEL_ENC))
+    print_submodel_loc("refiner 1st stage .decoder", submodels_loc.get(REFINER_FSTAGE_MODEL_DEC))
+    print_submodel_loc("refiner model"             , submodels_loc.get(REFINER_MODEL           ))
+    print_submodel_loc("refiner conditioner "      , submodels_loc.get(REFINER_COND            ))
+    print()
+
+    tinybreaker_submodels = [
+      #                       StateDict.from_location(path_and_prefix, subprefix1, subprefix2)                 |
+      #----------------------------+------------------------------------------+------------+-------------------+
+      # prefix                     |           path_and_prefix                | subprefix1 | subprefix2        |
+      ("first_stage_model"        ,(submodels_loc.get(FSTAGE_MODEL_ENC        ), "encoder"                    )),
+      ("first_stage_model"        ,(submodels_loc.get(FSTAGE_MODEL_DEC        ), "decoder", "post_quant_conv" )),
+      ("base.diffusion_model"     ,(submodels_loc.get(BASE_MODEL              ),                              )),
+      ("transcoder"               ,(submodels_loc.get(_TRANSCODER_XL_SD       ),                              )),
+      ("refiner.first_stage_model",(submodels_loc.get(REFINER_FSTAGE_MODEL_ENC), "encoder"                    )),
+      ("refiner.first_stage_model",(submodels_loc.get(REFINER_FSTAGE_MODEL_DEC), "decoder"                    )),
+      ("refiner.diffusion_model"  ,(submodels_loc.get(REFINER_MODEL           ),                              )),
+      ("refiner.conditioner"      ,(submodels_loc.get(REFINER_COND            ),                              )),
+    ]
+    return StateDict.from_submodels(tinybreaker_submodels)
+
+
+
+def make_prototype1_sdxl(submodels_loc: dict) -> StateDict:
+    """Creates a TinyBreaker model (PROTOTYPE1) with SDXL as refiner.
+    Args:
+        submodels_loc: A dictionary of "submodel" -> (file_path, prefix) with the
+                       location of the each submodel to be used.
+                       The `file_path` is the path to the model file.
+                       The `prefix` is the prefix of the tensors in the model file.
+    """
+    fatal_error("make_prototype1_sdxl() is not implemented yet.",
                 "Only SD1.5 refiners are supported at the moment, use the --sd option.")
     return StateDict()
 
 
-def make_tiny_breaker(submodels_loc: dict, refiner_type: str) -> StateDict:
+
+def make_tinybreaker(submodels_path_prefix: dict,
+                     refiner_type         : str,
+                     version              : str = "prototype1"
+                     ) -> StateDict:
     """
     Creates a TinyBreaker model from the given submodels.
     Args:
-        submodels_loc (dict): A dictionary of submodel -> (file_path, prefix) with
-                              the location of the each submodel to be used.
-                              The `file_path` is the path to the model file.
-                              The `prefix` is the prefix of the tensors in the model
-                              file that belong to the submodel.
-        refiner_type   (str): The type of refiner model to use for the TinyBreaker model.
-                              Supported values: "sd15", "sdxl".
+        submodels_path_prefix: A dictionary of submodel -> (file_path, prefix) with
+                               the location of the each submodel to be used.
+                               The `file_path` is the path to the model file.
+                               The `prefix` is the prefix of the tensors in the model
+                               file that belong to the submodel.
+        refiner_type: The type of refiner model to use for the TinyBreaker model.
+                      Supported values: "sd15", "sdxl".
+        version     : The version of the TinyBreaker model to create.
+                      Supported values: "prototype0", "prototype1".
     """
-    if refiner_type == "sd15":
-        return make_tiny_breaker_with_sd15(submodels_loc)
-    elif refiner_type == "sdxl":
-        return make_tiny_breaker_with_sdxl(submodels_loc)
+    if version == "prototype0":
+        return make_prototype0_sd15(submodels_path_prefix)
+
+    elif version == "prototype1":
+        if refiner_type == "sd15":
+            return make_prototype1_sd15(submodels_path_prefix)
+        elif refiner_type == "sdxl":
+            return make_prototype1_sdxl(submodels_path_prefix)
+        else:
+            fatal_error(f"Unknown refiner type '{refiner_type}'. Only 'sd15' and 'sdxl' are supported")
+
     else:
-        fatal_error(f"Unknown model kind '{refiner_type}'",
-                     "Only 'sd15' and 'sdxl' are supported")
+        fatal_error(f"Unknown model version '{version}'. Only 'prototype0' and 'prototype1' are supported")
 
 
 
@@ -664,6 +759,7 @@ def main(args=None, parent_script=None):
     parser.add_argument(      "--thumbnail"  , help="The path to the thumbnail image for the model.", type=str, default=None)
     parser.add_argument("-o", "--output"     , help="the output file name", type=str, default="output")
     parser.add_argument("-c", "--color"      , help="Use color output when connected to a terminal", action='store_true')
+    parser.add_argument(      "--model-type" , help="The type of model to create. Supported values: 'prototype0', 'prototype1'.", type=str, default='prototype1')
     parser.add_argument("--color-always"     , help="Always use color output", action='store_true')
     args = parser.parse_args(args)
 
@@ -730,14 +826,17 @@ def main(args=None, parent_script=None):
         submodels_loc.update(submodels_aux)
 
     # generate model and metadata
-    state_dict = make_tiny_breaker(submodels_loc, refiner_type = "sdxl" if args.sdxl else "sd15" )
+    state_dict = make_tinybreaker(submodels_loc,
+                                  refiner_type = "sdxl" if args.sdxl else "sd15",
+                                  version      = args.model_type,
+                                  )
     metadata   = make_metadata(resolution     = args.resolution,
                                title          = args.title,
                                description    = args.description,
                                author         = args.author,
                                license        = args.license,
-                               thumbnail_path = args.thumbnail)
-
+                               thumbnail_path = args.thumbnail,
+                               )
     # try to load the extra metadata from the provided .ini file
     extra_metadata = load_kv_file(args.metadata) if args.metadata else None
     if extra_metadata:
@@ -745,12 +844,11 @@ def main(args=None, parent_script=None):
         metadata = extra_metadata
 
     # save model
-    state_dict.save_as_safetensors(args_output_file,
-                                   metadata  = metadata,
-                                   overwrite = False)
+    if state_dict:
+        state_dict.save_as_safetensors(args_output_file,
+                                       metadata  = metadata,
+                                       overwrite = False)
     print()
-
-
 
 
 

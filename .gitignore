@@ -1,16 +1,20 @@
-
+#
 # OS system files
 #
 .DS_Store
 .profile
 Thumbs.db
 
+
+#
 # Editors' backup and temporary files
 #
 *.bak
 *.tmp
 *.kate-swp
 
+
+#
 # IDEs and editors
 #
 Xcodeproj/
@@ -19,17 +23,24 @@ Xcodeproj/
 *.sublime-project
 *.sublime-workspace
 
-# Python
+
+#
+# PYTHON
 #
 __pycache__/
 venv/
 
-# User-specific files and folders
+
+#
+# USER-SPECIFIC FILES AND FOLDERS
 #
 *~.*
 *~/
 
-# auxiliary files
+
 #
-tinybreaker.sh
+# OUTPUT FILES
+#
+BaseModels/*.safetensors
+
 
